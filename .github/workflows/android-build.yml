@@ -28,6 +28,8 @@ jobs:
           test -f source/android/app/build.gradle
           test -f source/src/lib.rs
           test -s source/assets/flow_corpus.bin
+      - name: Restore original Simbers UI on Android
+        run: python3 patches/apply.py source
       - name: Install Rust and Android target
         uses: dtolnay/rust-toolchain@stable
         with:
