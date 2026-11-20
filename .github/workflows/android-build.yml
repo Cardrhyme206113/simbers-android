@@ -1,0 +1,77 @@
+name: Build Simbers Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Simbers-Android-ARM64-Source-Compact.zip'
+      - '.github/workflows/android-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract uploaded Android port
+        run: |
+          mkdir -p source
+          unzip -q Simbers-Android-ARM64-Source-Compact.zip -d source
+          test -f source/Cargo.toml
+          test -f source/android/app/build.gradle
+          test -f source/src/lib.rs
+          test -s source/assets/flow_corpus.bin
+      - name: Install Rust and Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: source
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install SDK and NDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager 'ndk;27.2.12479018' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Build native ARM64 Rust engine
+        working-directory: source
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.2.12479018"
+          cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build --release --lib
+          test -s android/app/src/main/jniLibs/arm64-v8a/libsimbers.so
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build and sign debug APK
+        working-directory: source/android
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Verify APK contains native library
+        run: |
+          APK=source/android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libsimbers.so'
+          unzip -l "$APK" | grep -q 'classes.dex'
+          unzip -l "$APK" | grep -q 'AndroidManifest.xml'
+      - name: Upload installable Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Simbers-Android-arm64-debug-APK
+          path: source/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
